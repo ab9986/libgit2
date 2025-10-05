@@ -21,58 +21,27 @@ jobs:
   # Run our CI/CD builds.  We build a matrix with the various build targets
   # and their details.  Then we build either in a docker container (Linux)
   # or on the actual hosts (macOS, Windows).
+  prepare_env:
+    name: Prepare build version
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get build version
+        id: vars
+        run: |
+          ts=`date +'%Y%m%d'`
+          version=`echo ${{ github.run_number }}.${ts}`
+          echo "version=${version}" >> $GITHUB_ENV
+    outputs:
+      version: ${{ env.version }}
   build:
+    needs: prepare_env
     strategy:
       matrix:
         platform:
         # All builds: core platforms
-        - name: "Linux (Noble, GCC, OpenSSL, libssh2)"
-          id: noble-gcc-openssl
-          os: ubuntu-latest
-          container:
-            name: noble
-          env:
-            CC: gcc
-            CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DDEBUG_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DUSE_SSH=libssh2 -DDEBUG_STRICT_ALLOC=ON -DDEBUG_STRICT_OPEN=ON
-        - name: "Linux (Noble, Clang, mbedTLS, OpenSSH)"
-          id: noble-clang-mbedtls
-          os: ubuntu-latest
-          container:
-            name: noble
-          env:
-            CC: clang
-            CMAKE_OPTIONS: -DUSE_HTTPS=mbedTLS -DUSE_SHA1=HTTPS -DREGEX_BACKEND=pcre -DDEPRECATE_HARD=ON -DDEBUG_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DUSE_SSH=exec -DUSE_HTTP_PARSER=http-parser
-            CMAKE_GENERATOR: Ninja
-        - name: "Linux (Xenial, GCC, OpenSSL, OpenSSH)"
-          id: xenial-gcc-openssl
-          os: ubuntu-latest
-          container:
-            name: xenial
-          env:
-            CC: gcc
-            CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DDEBUG_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DUSE_SSH=exec -DDEBUG_STRICT_ALLOC=ON -DDEBUG_STRICT_OPEN=ON
-        - name: "Linux (Xenial, Clang, mbedTLS, libssh2)"
-          id: xenial-gcc-mbedtls
-          os: ubuntu-latest
-          container:
-            name: xenial
-          env:
-            CC: clang
-            CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=mbedTLS -DUSE_SHA1=HTTPS -DDEPRECATE_HARD=ON -DDEBUG_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DUSE_SSH=libssh2
-        - name: "macOS"
-          id: macos
-          os: macos-13
-          setup-script: osx
-          env:
-            CC: clang
-            CMAKE_OPTIONS: -DREGEX_BACKEND=regcomp_l -DDEPRECATE_HARD=ON -DDEBUG_LEAK_CHECKER=leaks -DUSE_GSSAPI=ON
-            CMAKE_GENERATOR: Ninja
-            PKG_CONFIG_PATH: /usr/local/opt/openssl/lib/pkgconfig
-            SKIP_SSH_TESTS: true
-            SKIP_NEGOTIATE_TESTS: true
         - name: "Windows (amd64, Visual Studio, Schannel)"
           id: windows-amd64-vs
           os: windows-2022
@@ -226,13 +195,18 @@ jobs:
         container: ${{ matrix.platform.container.name }}
         container-version: ${{ env.docker-registry-container-sha }}
         shell: ${{ matrix.platform.shell }}
-    - name: Upload test results
-      uses: actions/upload-artifact@v4
-      if: success() || failure()
-      with:
-        name: test-results-${{ matrix.platform.id }}
-        path: build/results_*.xml
-
+      # Upload release for each build
+      - name: Upload binaries to release
+        id: upload_release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ github.token }}
+          file: build/*
+          file_glob: true
+          tag: v${{ needs.prepare_env.outputs.version }}
+          release_name: libgit2_${{ needs.prepare_env.outputs.version }}
+          draft: false
+          prerelease: false
   documentation:
     name: Validate documentation
     runs-on: ubuntu-latest
